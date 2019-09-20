@@ -18,19 +18,25 @@ config = json.loads(configFile)
 lastBook = config["config"]["lastbook"]
 lastChapter = config["config"]["lastchapter"]
 versesToInsert = []
-importBook = False    
+importBook = lastChapter == 0   
+LimitExceeded = False 
 for book in books:
-    if importBook:
+    if importBook and LimitExceeded == False:
         for chapter in range(1, book['chapters'] + 1 ):
             response = requests.get(f"https://bibleapi.co/api/verses/{version}/{book['abbrev']}/{chapter}",headers=httpHeaders)
             verses = response.json()
-            versesToInsert.append((f'{chapter['book']['abbrev']}', chapter['chapter']['number'], chapter['chapter']['verses'], chapter['verses']['number'], f'{chapter['verses']['text']}'))
+            versesToInsert.append((f'{book['abbrev']}', chapter['chapter']['number'], chapter['chapter']['verses'], chapter['verses']['number'], f'{chapter['verses']['text']}'))
             if response.headers["X-RateLimit-Remaining"] == 0:
-                pass
+                config["config"]["lastchapter"] = chapter
+                config["config"]["lastBook"] = book['abbrev']               
+                json.dump(config, configFile)
+                configFile.close()
+                LimitExceeded = True
         if chapter == book['chapters']:
             chaptersFile.write('{ "%s", "%s"},\n' % (book['abbrev'], book['name']))
     if lastChapter > 0 and book['abbrev'] == lastBook
         importBook = True
+        chapter = lastChapter
    
 
 chaptersFile.close()
