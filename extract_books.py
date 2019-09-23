@@ -15,6 +15,7 @@ config = json.loads(jsonText)
 lastBook = config["config"]["lastbook"]
 lastChapter = config["config"]["lastchapter"]
 versesToInsert = []
+booksToInsert = []
 importBook = lastChapter == 0   
 LimitExceeded = False 
 versesImported = 0
@@ -32,15 +33,9 @@ for book in books:
     print('\n####################################################')
     if importBook and LimitExceeded == False:
         for chapter in range(1, book['chapters'] + 1 ):
+            print(f'\nChapter {chapter}\n')
             response = requests.get('https://bibleapi.co/api/verses/{}/{}/{}'.format(version,book['abbrev'],chapter),headers=httpHeaders)
-            verses = response.json()
-            versesImported = 0
-            print(f'\nChapter {chapter}, API LImit: {response.headers["X-RateLimit-Remaining"]}')
-            for verse in verses['verses']:
-                versesToInsert.append({'{}'.format(book['abbrev']), verses['chapter']['number'], verses['chapter']['verses'], verse['number'], '{}'.format(verse['text'])})
-                versesImported += 1
-                print(f'{versesImported},', end=" ")
-            if response.headers["X-RateLimit-Remaining"] == 0:
+            if response.status_code == 429:
                 print('####################################################')
                 print('API limit reached. Save to log and exiting.')
                 print('####################################################')
@@ -48,15 +43,27 @@ for book in books:
                 config["config"]["lastBook"] = book['abbrev']               
                 json.dump(config, configFile)
                 LimitExceeded = True
+            elif  response.status_code == 404:
+                continue
+            else:    
+                verses = response.json()
+                versesImported = 0
+                for verse in verses['verses']:
+                    versesToInsert.append({'{}'.format(book['abbrev']), verses['chapter']['number'], verses['chapter']['verses'], verse['number'], '{}'.format(verse['text'])})
+                    versesImported += 1
+                    print(f'{versesImported},', end=" ")
+            
         if chapter == book['chapters']:
             chaptersFile.write('{ "%s", "%s"},\n' % (book['abbrev'], book['name']))
+            booksToInsert.append({f"{book['abbrev']}", f"{book['name']}",book['chapters']})
+            
     if lastChapter > 0 and book['abbrev'] == lastBook:
         importBook = True
         chapter = lastChapter
    
-if configFile.closed() == False:
-    config.close()
-if chaptersFile.closed() == False:
+if configFile.closed == False:
+    configFile.close()
+if chaptersFile.closed == False:
     chaptersFile.close()
 print('####################################################')
 print('Writing data into SQlite database.')
@@ -64,13 +71,21 @@ print('####################################################')
 with sqlite3.connect(f"{version}_{lang.replace('-','_')}.db") as dbconnection:
     query = dbconnection.cursor()
     query.execute('drop table if exists verses')
+    query.execute('drop table if exists books')
     query.execute('''create table verses 
                     (bookID text not null, chapterID integer not null, versesInChapter integer, verseID integer not null, verse text not null,
                     primary key(bookID,chapterID,verseID))'''
     )
-    query.executemany('''insert into verses(bookID,chapterID,versesInChapter,verseID,verse)
+    query.execute('''create table books 
+                    (bookID text not null, name text not null, chapters integer,
+                    primary key(bookID))'''
+    )
+    query.executemany('''insert into verses(bookID, chapterID, versesInChapter, verseID, verse)
                     values
-                    (bookID,chapterID,versesInChapter,verseID,verse)''', versesToInsert)
+                    (?, ?, ?, ?, ?)''', versesToInsert)
+    query.executemany('''insert into books(bookID,name,chapters)
+                    values
+                    (?, ?, ?)''', booksToInsert)
 print('####################################################')
 print('Process finished')
 print('####################################################')
